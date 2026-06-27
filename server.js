@@ -101,35 +101,6 @@ function buildAuthArgs(cred) {
 }
 
 // Check if a host is in scope for testing
-function isInScope(urlOrHost, scopeIn, scopeOut) {
-  if (!scopeIn || scopeIn.length === 0 || (scopeIn.length === 1 && scopeIn[0] === '*')) return true;
-  try {
-    let host = urlOrHost;
-    if (host.startsWith('http://') || host.startsWith('https://')) {
-      host = new URL(host).hostname;
-    }
-    // Remove port if present
-    host = host.split(':')[0];
-
-    // Check out-of-scope first (hard block)
-    for (const oos of scopeOut) {
-      if (!oos) continue;
-      const pattern = oos.replace(/\*/g, '.*');
-      if (new RegExp(`^${pattern}$`, 'i').test(host)) return false;
-    }
-
-    // Check in-scope
-    for (const ins of scopeIn) {
-      if (ins === '*') return true;
-      const pattern = ins.replace(/\*/g, '.*');
-      if (new RegExp(`${pattern}$`, 'i').test(host)) return true;
-    }
-    return false;
-  } catch(e) {
-    return false;
-  }
-}
-
 // Load credentials for a target from vault
 function loadCredentials(target) {
   let cred = db.getCredential(target.name);
@@ -861,20 +832,8 @@ async function phaseMemoryLoad(session, target) {
 async function phaseTargetIngest(session, target) {
   notify(session.id, 'phase_detail', 'TARGET_INGEST', `Configuring target scope for ${target.url}`);
 
-  // Parse and store scope
   const scopeIn = (target.scope_in || '*').split(',').map(s => s.trim());
   const scopeOut = (target.scope_out || '').split(',').map(s => s.trim()).filter(Boolean);
-
-  // Parse target domain for automatic scoping
-  let targetDomain = '';
-  try { targetDomain = new URL(target.url).hostname; } catch(e) {}
-
-  if (scopeIn.length === 1 && scopeIn[0] === '*') {
-    scopeIn[0] = targetDomain;
-  }
-  // Store parsed scope in session config for enforcement
-  db.getDb().prepare("UPDATE hunt_sessions SET config = json_set(json_set(config, '$.scope_in', ?), '$.scope_out', ?) WHERE id = ?")
-    .run(JSON.stringify(scopeIn), JSON.stringify(scopeOut), session.id);
 
   notify(session.id, 'phase_detail', 'TARGET_INGEST', `Scope IN: ${scopeIn.join(', ')}, Scope OUT: ${scopeOut.join(', ') || 'none'}`);
 
@@ -1122,21 +1081,7 @@ async function runAgent(session, target, agent, authArgs = [], cred = null) {
 }
 
 async function gatherAgentProbeData(session, targetUrl, agent, authArgs = []) {
-  // Load scope from session
-  let scopeIn = ['*'], scopeOut = [];
-  try {
-    const cfg = JSON.parse(db.getSession(session.id)?.config || '{}');
-    if (cfg.scope_in) scopeIn = JSON.parse(typeof cfg.scope_in === 'string' ? cfg.scope_in : JSON.stringify(cfg.scope_in));
-    if (cfg.scope_out) scopeOut = JSON.parse(typeof cfg.scope_out === 'string' ? cfg.scope_out : JSON.stringify(cfg.scope_out));
-  } catch(e) {}
-
   const data = { targetUrl, responseHeaders: '', responseBody: '', httpCode: '', endpoints: [] };
-
-  // Only probe if target is in scope
-  if (!isInScope(targetUrl, scopeIn, scopeOut)) {
-    notify(session.id, 'agent_result', 'AGENT_DEPLOY', `Skipping ${agent.name}: ${targetUrl} is out of scope`);
-    return data;
-  }
 
   // Get response headers
   try {
@@ -1174,15 +1119,6 @@ async function gatherAgentProbeData(session, targetUrl, agent, authArgs = []) {
 }
 
 async function claudeAgentAnalysis(session, target, agent, probeData, cred = null) {
-  // Load scope for the prompt
-  let scopeNote = '';
-  try {
-    const cfg = JSON.parse(db.getSession(session.id)?.config || '{}');
-    const scopeIn = cfg.scope_in ? JSON.parse(typeof cfg.scope_in === 'string' ? cfg.scope_in : JSON.stringify(cfg.scope_in)) : ['*'];
-    const scopeOut = cfg.scope_out ? JSON.parse(typeof cfg.scope_out === 'string' ? cfg.scope_out : JSON.stringify(cfg.scope_out)) : [];
-    scopeNote = `SCOPE: Only test hosts matching ${JSON.stringify(scopeIn)}. DO NOT test: ${JSON.stringify(scopeOut)}. Only report findings on in-scope hosts.`;
-  } catch(e) {}
-
   const authNote = cred
     ? `AUTHENTICATED: Yes (${cred.username ? 'user: ' + cred.username : cred.cookie ? 'cookie-based' : cred.jwt ? 'JWT token' : 'API key'}) — test as an authenticated user.`
     : 'AUTHENTICATED: No — testing as unauthenticated user.';
@@ -1190,7 +1126,6 @@ async function claudeAgentAnalysis(session, target, agent, probeData, cred = nul
   const prompt = `You are a senior bug bounty hunter specializing in ${agent.type.toUpperCase()} vulnerabilities. Analyze this target for security issues.
 
 TARGET: ${target.url}
-${scopeNote}
 VULNERABILITY TYPE: ${agent.type} (${agent.description})
 HTTP CODE: ${probeData.httpCode}
 ${authNote}
