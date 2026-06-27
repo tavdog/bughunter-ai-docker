@@ -58,7 +58,7 @@ RUN npm install -g @anthropic-ai/claude-code 2>&1 || echo "Claude Code not insta
 WORKDIR /var/www/bughunter.clodhost.com
 
 # Install Node.js app dependencies
-COPY package.json package-lock.json* ./
+COPY package.json ./
 RUN npm install --omit=dev 2>&1 || npm install 2>&1
 
 # Copy application code
