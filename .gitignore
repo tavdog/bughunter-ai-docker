@@ -39,3 +39,13 @@ Thumbs.db
 # Temp
 /tmp/
 *.log
+
+# Web app additions
+*.db
+*.db-shm
+*.db-wal
+public/reports/
+.env
+docker/.env
+*.zip
+.DS_Store

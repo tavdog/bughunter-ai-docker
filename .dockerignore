@@ -1,0 +1,12 @@
+node_modules/
+.git/
+.github/
+docker-compose.yml
+.env
+*.db
+public/reports/
+examples/
+SETUP.md
+CONTRIBUTING.md
+LICENSE
+install.sh

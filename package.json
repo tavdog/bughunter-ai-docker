@@ -1,0 +1,29 @@
+{
+  "name": "bughunter.clodhost.com",
+  "version": "1.0.0",
+  "description": "<p align=\"center\">   <img src=\"docs/images/bughunter-banner.png\" alt=\"BugHunter AI\" width=\"800\" /> </p>",
+  "main": "index.js",
+  "directories": {
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/h4ckologic/bughunter-ai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/h4ckologic/bughunter-ai/issues"
+  },
+  "homepage": "https://github.com/h4ckologic/bughunter-ai#readme",
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "express": "^5.2.1",
+    "uuid": "^14.0.1",
+    "ws": "^8.21.0"
+  }
+}

@@ -1,0 +1,25 @@
+services:
+  bughunter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "443:443"
+    environment:
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      - BUGHUNTER_USER=${BUGHUNTER_USER:-}
+      - BUGHUNTER_PASS=${BUGHUNTER_PASS:-}
+      - VAULT_ENCRYPTION_KEY=${VAULT_ENCRYPTION_KEY:-}
+      - NODE_ENV=production
+      - PORT=3000
+      - DB_PATH=/data/bughunter.db
+    volumes:
+      - bughunter_data:/data
+      - bughunter_reports:/var/www/bughunter.clodhost.com/public/reports
+    restart: unless-stopped
+
+volumes:
+  bughunter_data:
+  bughunter_reports:

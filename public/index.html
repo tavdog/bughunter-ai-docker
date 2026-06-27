@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BugHunter AI — Autonomous Bug Bounty Framework</title>
+<style>
+  :root {
+    --bg: #0b1120;
+    --bg-card: #111827;
+    --bg-input: #1f2937;
+    --border: #1e3a5f;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --critical: #ef4444;
+    --high: #f97316;
+    --medium: #eab308;
+    --low: #22c55e;
+    --info: #64748b;
+    --zeroday: #a855f7;
+    --success: #22c55e;
+    --running: #3b82f6;
+    --pending: #64748b;
+    --failed: #ef4444;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  a { color: var(--accent); text-decoration: none; }
+
+  /* Header */
+  header {
+    background: var(--bg-card); border-bottom: 2px solid var(--accent);
+    padding: 16px 24px; display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 100;
+  }
+  header .logo { display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 700; }
+  header .logo .icon { font-size: 28px; }
+  header .logo span { color: var(--accent); }
+  header .stats { display: flex; gap: 16px; font-size: 13px; color: var(--text-muted); }
+  header .stats .stat { background: var(--bg-input); padding: 6px 14px; border-radius: 20px; }
+  header .stats .stat b { color: var(--text); }
+
+  /* Layout */
+  .layout { display: flex; min-height: calc(100vh - 69px); }
+  nav {
+    width: 220px; background: var(--bg-card); border-right: 1px solid var(--border);
+    padding: 16px 0; flex-shrink: 0;
+  }
+  nav a {
+    display: flex; align-items: center; gap: 10px; padding: 10px 24px;
+    color: var(--text-muted); font-size: 14px; cursor: pointer; border-left: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  nav a:hover, nav a.active { color: var(--text); background: rgba(59,130,246,0.1); border-left-color: var(--accent); }
+  nav a .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+  nav .nav-section { padding: 16px 24px 6px; font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px; }
+
+  main { flex: 1; padding: 24px; overflow-y: auto; max-height: calc(100vh - 69px); }
+
+  /* Cards */
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+  .card-header { font-size: 16px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 900px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } nav { display: none; } }
+
+  /* Stat cards */
+  .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; text-align: center; }
+  .stat-card .value { font-size: 32px; font-weight: 700; }
+  .stat-card .label { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+  .stat-card.critical .value { color: var(--critical); }
+  .stat-card.high .value { color: var(--high); }
+  .stat-card.total .value { color: var(--accent); }
+  .stat-card.active .value { color: var(--success); }
+
+  /* Buttons */
+  button, .btn {
+    background: var(--accent); color: white; border: none; padding: 8px 18px; border-radius: 6px;
+    font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.15s;
+  }
+  button:hover, .btn:hover { background: var(--accent-hover); }
+  button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-sm { padding: 5px 12px; font-size: 12px; }
+  .btn-danger { background: var(--critical); }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-outline:hover { background: var(--bg-input); }
+
+  /* Forms */
+  .form-group { margin-bottom: 14px; }
+  label { display: block; font-size: 13px; font-weight: 500; color: var(--text-muted); margin-bottom: 4px; }
+  input, select, textarea {
+    width: 100%; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 14px; color: var(--text); font-size: 14px; font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 12px; }
+  .row > * { flex: 1; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 10px 14px; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); font-size: 12px; text-transform: uppercase; }
+  td { padding: 10px 14px; border-bottom: 1px solid rgba(30,58,95,0.3); }
+  tr:hover td { background: rgba(59,130,246,0.05); }
+
+  /* Badges */
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .badge-critical { background: rgba(239,68,68,0.2); color: var(--critical); }
+  .badge-high { background: rgba(249,115,22,0.2); color: var(--high); }
+  .badge-medium { background: rgba(234,179,8,0.2); color: var(--medium); }
+  .badge-low { background: rgba(34,197,94,0.2); color: var(--low); }
+  .badge-info { background: rgba(100,116,139,0.2); color: var(--info); }
+  .badge-running { background: rgba(59,130,246,0.2); color: var(--running); }
+  .badge-completed { background: rgba(34,197,94,0.2); color: var(--success); }
+  .badge-pending { background: rgba(100,116,139,0.2); color: var(--pending); }
+
+  /* Phases */
+  .phase-bar { display: flex; gap: 2px; margin: 12px 0; }
+  .phase-dot { flex: 1; height: 6px; border-radius: 3px; background: var(--border); }
+  .phase-dot.completed { background: var(--success); }
+  .phase-dot.running { background: var(--running); animation: pulse 1s infinite; }
+  .phase-dot.failed { background: var(--failed); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* Event log */
+  .event-log { max-height: 400px; overflow-y: auto; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 13px; }
+  .event { padding: 6px 0; border-bottom: 1px solid rgba(30,58,95,0.2); display: flex; gap: 8px; }
+  .event .time { color: var(--text-muted); white-space: nowrap; font-size: 11px; }
+  .event .phase { color: var(--accent); white-space: nowrap; font-size: 11px; min-width: 100px; }
+  .event .msg { flex: 1; }
+  .event.type-finding .msg { color: var(--high); }
+  .event.type-phase_complete .msg { color: var(--success); }
+  .event.type-phase_error .msg { color: var(--critical); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .tab { padding: 10px 20px; cursor: pointer; color: var(--text-muted); font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.15s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Modal */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; }
+  .modal-overlay.active { display: flex; }
+  .modal { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; }
+  .modal h2 { margin-bottom: 16px; }
+
+  /* Live indicator */
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); display: inline-block; }
+  .live-dot.inactive { background: var(--text-muted); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .hidden { display: none !important; }
+  .mb { margin-bottom: 16px; }
+  .mt { margin-top: 16px; }
+  .text-muted { color: var(--text-muted); }
+  .text-sm { font-size: 12px; }
+  .text-center { text-align: center; }
+  .flex-between { display: flex; justify-content: space-between; align-items: center; }
+  .gap { gap: 8px; }
+  pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <span class="icon">&#128027;</span>
+    <div>BugHunter <span>AI</span></div>
+  </div>
+  <div class="stats" id="header-stats">
+    <div class="stat">Sessions: <b id="stat-sessions">-</b></div>
+    <div class="stat">Findings: <b id="stat-findings">-</b></div>
+    <div class="stat">Critical: <b id="stat-critical" style="color:var(--critical)">-</b></div>
+    <div class="stat"><span class="live-dot" id="live-indicator"></span> <b id="stat-active">-</b> active</div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav>
+    <div class="nav-section">Main</div>
+    <a onclick="showPage('dashboard')" class="active" data-page="dashboard">
+      <span class="nav-icon">&#9200;</span> Dashboard
+    </a>
+    <a onclick="showPage('hunt')" data-page="hunt">
+      <span class="nav-icon">&#128269;</span> New Hunt
+    </a>
+    <a onclick="showPage('sessions')" data-page="sessions">
+      <span class="nav-icon">&#128196;</span> Sessions
+    </a>
+    <div class="nav-section">Data</div>
+    <a onclick="showPage('targets')" data-page="targets">
+      <span class="nav-icon">&#127919;</span> Targets
+    </a>
+    <a onclick="showPage('findings')" data-page="findings">
+      <span class="nav-icon">&#9888;</span> Findings
+    </a>
+    <a onclick="showPage('vault')" data-page="vault">
+      <span class="nav-icon">&#128274;</span> Vault
+    </a>
+    <div class="nav-section">Intel</div>
+    <a onclick="showPage('patterns')" data-page="patterns">
+      <span class="nav-icon">&#128218;</span> Patterns
+    </a>
+    <a onclick="showPage('logs')" data-page="logs">
+      <span class="nav-icon">&#128221;</span> Learning Logs
+    </a>
+  </nav>
+
+  <main id="main-content"></main>
+</div>
+
+<!-- Report Modal -->
+<div class="modal-overlay" id="report-modal">
+  <div class="modal"><div id="report-modal-content"></div></div>
+</div>
+
+<!-- Live Hunt Modal -->
+<div class="modal-overlay" id="live-hunt-modal">
+  <div class="modal" style="max-width:900px;" id="live-hunt-content"></div>
+</div>
+
+<script>
+// === APP STATE ===
+let currentPage = 'dashboard';
+let currentSessionId = null;
+let ws = null;
+let eventSource = null;
+let activeHuntInterval = null;
+
+// === NAVIGATION ===
+function showPage(page, data) {
+  currentPage = page;
+  document.querySelectorAll('nav a[data-page]').forEach(a => a.classList.remove('active'));
+  const navLink = document.querySelector(`nav a[data-page="${page}"]`);
+  if (navLink) navLink.classList.add('active');
+  const main = document.getElementById('main-content');
+  switch(page) {
+    case 'dashboard': renderDashboard(main, data); break;
+    case 'hunt': renderNewHunt(main); break;
+    case 'sessions': renderSessions(main); break;
+    case 'targets': renderTargets(main); break;
+    case 'findings': renderFindings(main); break;
+    case 'vault': renderVault(main); break;
+    case 'patterns': renderPatterns(main); break;
+    case 'logs': renderLogs(main); break;
+  }
+}
+
+// === API HELPERS ===
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  const ct = res.headers.get('content-type') || '';
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}: ${text.substring(0, 200)}`);
+  }
+  if (!ct.includes('application/json')) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Non-JSON response: ${text.substring(0, 200)}`);
+  }
+  return res.json();
+}
+const get = (p) => api('GET', p);
+const post = (p, b) => api('POST', p, b);
+const del = (p) => api('DELETE', p);
+
+// === HEADER STATS ===
+async function updateHeaderStats() {
+  try {
+    const stats = await get('/api/stats');
+    document.getElementById('stat-sessions').textContent = stats.total_sessions;
+    document.getElementById('stat-findings').textContent = stats.total_findings;
+    document.getElementById('stat-critical').textContent = stats.critical_findings;
+    document.getElementById('stat-active').textContent = stats.active_hunts;
+    const dot = document.getElementById('live-indicator');
+    dot.className = 'live-dot' + (stats.active_hunts > 0 ? '' : ' inactive');
+  } catch(e) {}
+}
+
+// === WEBSOCKET ===
+function connectWebSocket() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${location.host}/ws`);
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'hunt_complete' || data.type === 'hunt_error') {
+      updateHeaderStats();
+      if (currentPage === 'sessions') renderSessions(document.getElementById('main-content'));
+      if (currentPage === 'dashboard') renderDashboard(document.getElementById('main-content'));
+    }
+    if (data.type === 'finding') {
+      updateHeaderStats();
+    }
+    if (currentSessionId && data.session_id === currentSessionId) {
+      if (currentPage === 'hunt') {
+        updateLiveHuntView(data);
+      }
+    }
+  };
+  ws.onclose = () => { setTimeout(connectWebSocket, 3000); };
+}
+connectWebSocket();
+
+// === SSE ===
+function connectSSE() {
+  eventSource = new EventSource('/api/events/stream');
+  eventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'finding') updateHeaderStats();
+    } catch(ex) {}
+  };
+}
+connectSSE();
+
+// === PAGE RENDERERS ===
+
+function renderDashboard(main) {
+  get('/api/stats').then(stats => {
+    get('/api/targets').then(targets => {
+      get('/api/sessions').then(sessions => {
+        const recentSessions = sessions.slice(0, 5);
+        const recentFindings = sessions.flatMap(s => s.findings_count || 0).reduce((a, b) => a + b, 0);
+
+        get('/api/findings').then(findings => {
+          const critical = findings.filter(f => f.severity === 'critical');
+          const high = findings.filter(f => f.severity === 'high');
+
+          main.innerHTML = `
+            <h2 style="margin-bottom:20px;">Dashboard</h2>
+            <div class="grid grid-4 mb">
+              <div class="stat-card critical"><div class="value">${stats.critical_findings}</div><div class="label">Critical Findings</div></div>
+              <div class="stat-card high"><div class="value">${stats.high_findings}</div><div class="label">High Findings</div></div>
+              <div class="stat-card total"><div class="value">${stats.total_findings}</div><div class="label">Total Findings</div></div>
+              <div class="stat-card active"><div class="value">${stats.active_hunts}</div><div class="label">Active Hunts</div></div>
+            </div>
+            <div class="grid grid-2">
+              <div class="card">
+                <div class="card-header">&#127919; Recent Targets (${targets.length} total)</div>
+                ${targets.length === 0 ? '<p class="text-muted text-sm">No targets yet. Start a new hunt.</p>' :
+                  targets.slice(0, 5).map(t => `
+                    <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);">
+                      <div><strong>${htmlEscape(t.name)}</strong><br><span class="text-muted text-sm">${htmlEscape(t.url)}</span></div>
+                      <span class="badge badge-info">${t.target_type || 'web'}</span>
+                    </div>
+                  `).join('')}
+                ${targets.length > 5 ? `<p class="text-muted text-sm mt">+ ${targets.length - 5} more</p>` : ''}
+              </div>
+              <div class="card">
+                <div class="card-header">&#128196; Recent Sessions (${sessions.length} total)</div>
+                ${sessions.length === 0 ? '<p class="text-muted text-sm">No sessions yet.</p>' :
+                  recentSessions.map(s => `
+                    <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="showPage('sessions');viewSession(${s.id})">
+                      <div>
+                        <strong>${htmlEscape(s.target_name || 'Unknown')}</strong>
+                        <span class="badge badge-${s.mode === 'bounty' ? 'high' : s.mode === 'pentest' ? 'medium' : 'info'}">${s.mode}</span>
+                        <br><span class="text-muted text-sm">${s.started_at} &middot; ${s.findings_count} findings</span>
+                      </div>
+                      <span class="badge badge-${s.status === 'completed' ? 'completed' : s.status === 'running' ? 'running' : 'pending'}">${s.status}</span>
+                    </div>
+                  `).join('')}
+              </div>
+            </div>
+            ${critical.length > 0 ? `
+            <div class="card mt">
+              <div class="card-header">&#9888; Recent Critical Findings</div>
+              <table>
+                <thead><tr><th>Title</th><th>Target</th><th>CVSS</th><th>Type</th><th>Date</th></tr></thead>
+                <tbody>
+                  ${critical.slice(0, 5).map(f => `
+                    <tr>
+                      <td><strong>${htmlEscape(f.title)}</strong></td>
+                      <td>${htmlEscape(f.target_url || '')}</td>
+                      <td><span class="badge badge-critical">${f.cvss_score}</span></td>
+                      <td>${f.vulnerability_type}</td>
+                      <td class="text-muted text-sm">${f.discovered_at}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>` : ''}
+          `;
+        });
+      });
+    });
+  });
+}
+
+function renderNewHunt(main) {
+  get('/api/targets').then(targets => {
+    get('/api/sessions').then(sessions => {
+      main.innerHTML = `
+        <h2 style="margin-bottom:20px;">&#128269; New Bug Bounty Hunt</h2>
+        <div class="grid grid-2">
+          <div>
+            <div class="card">
+              <div class="card-header">Configure Hunt</div>
+              <div class="form-group">
+                <label>Target URL *</label>
+                <input id="hunt-url" placeholder="https://app.example.com" value="">
+              </div>
+              <div class="form-group">
+                <label>Target Name</label>
+                <input id="hunt-name" placeholder="My Target (auto-filled from URL)">
+              </div>
+              <div class="form-group">
+                <label>Program Name (optional)</label>
+                <input id="hunt-program" placeholder="e.g., HackerOne - ExampleCorp">
+              </div>
+              <div class="row">
+                <div class="form-group">
+                  <label>Hunt Mode</label>
+                  <select id="hunt-mode">
+                    <option value="bounty">Bounty (CVSS &ge; 8.0, top 10 findings)</option>
+                    <option value="pentest">Pentest (CVSS &ge; 4.0, top 20 findings)</option>
+                    <option value="comprehensive">Comprehensive (all findings, up to 50)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Target Type</label>
+                  <select id="hunt-type">
+                    <option value="web">Web Application</option>
+                    <option value="api">API / Web Service</option>
+                    <option value="mobile">Mobile (APK/IPA)</option>
+                    <option value="network">Network / Infrastructure</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Scope Include (comma-separated, * for wildcard)</label>
+                <input id="hunt-scope-in" placeholder="*.example.com, api.example.com" value="*">
+              </div>
+              <div class="form-group">
+                <label>Scope Exclude (comma-separated)</label>
+                <input id="hunt-scope-out" placeholder="blog.example.com, status.example.com">
+              </div>
+              <button onclick="startHunt()" style="width:100%;padding:14px;">&#128269; Start Hunt</button>
+              <div id="hunt-error" class="hidden mt" style="color:var(--critical);"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">&#128196; Active & Recent Sessions</div>
+              <div id="existing-sessions-list">
+                ${sessions.length === 0 ? '<p class="text-muted text-sm">No sessions yet</p>' :
+                  sessions.slice(0, 8).map(s => `
+                    <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);">
+                      <div>
+                        <strong>${htmlEscape(s.target_name || 'Unknown')}</strong>
+                        <span class="badge badge-${s.mode === 'bounty' ? 'high' : 'medium'}">${s.mode}</span>
+                        <br><span class="text-muted text-sm">Phase: ${s.current_phase} &middot; ${s.findings_count} findings</span>
+                      </div>
+                      <div style="display:flex;gap:8px;">
+                        <span class="badge badge-${s.status === 'completed' ? 'completed' : s.status === 'running' ? 'running' : 'pending'}">${s.status}</span>
+                        <button class="btn-sm btn-outline" onclick="viewSession(${s.id})">View</button>
+                        ${s.status !== 'completed' ? `<button class="btn-sm btn-outline" onclick="resumeHunt(${s.id})">Resume</button>` : ''}
+                        <button class="btn-sm btn-danger" onclick="deleteSession(${s.id})">X</button>
+                      </div>
+                    </div>
+                  `).join('')}
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="card">
+              <div class="card-header">&#127919; Saved Targets</div>
+              ${targets.length === 0 ? '<p class="text-muted text-sm">No saved targets</p>' :
+                targets.map(t => `
+                  <div class="flex-between" style="padding:8px 0;border-bottom:1px solid var(--border);">
+                    <div>
+                      <strong>${htmlEscape(t.name)}</strong><br>
+                      <span class="text-muted text-sm">${htmlEscape(t.url)} &middot; ${t.target_type}</span>
+                      ${t.program_name ? `<br><span class="text-sm">Program: ${htmlEscape(t.program_name)}</span>` : ''}
+                    </div>
+                    <div style="display:flex;gap:6px;">
+                      <button class="btn-sm btn-outline" onclick="useTarget('${t.url.replace(/'/g, "\\'")}','${(t.name || '').replace(/'/g, "\\'")}','${(t.program_name || '').replace(/'/g, "\\'")}', '${(t.scope_in || '*').replace(/'/g, "\\'")}', '${(t.scope_out || '').replace(/'/g, "\\'")}', '${t.target_type}')">Use</button>
+                      <button class="btn-sm btn-danger" onclick="deleteTarget(${t.id})">X</button>
+                    </div>
+                  </div>
+                `).join('')}
+            </div>
+
+            <div class="card">
+              <div class="card-header">&#128161; Quick Reference</div>
+              <table>
+                <tr><td><strong>Bounty</strong></td><td>CVSS &ge; 8.0, max 10 findings &mdash; critical + high with PoC</td></tr>
+                <tr><td><strong>Pentest</strong></td><td>CVSS &ge; 4.0, max 20 findings &mdash; all confirmed vulns</td></tr>
+                <tr><td><strong>Comprehensive</strong></td><td>All findings, max 50 &mdash; including informational</td></tr>
+                <tr><td><strong>Zero-day</strong></td><td>Always reported regardless of CVSS threshold</td></tr>
+              </table>
+              <p class="text-muted text-sm mt">
+                <strong>10 Phases:</strong> INIT &rarr; MEMORY_LOAD &rarr; TARGET_INGEST &rarr; APP_UNDERSTANDING &rarr; RECON &rarr; AGENT_DEPLOY &rarr; DYNAMIC_TEST &rarr; VULN_ASSESS &rarr; LEARNING &rarr; REPORT
+              </p>
+              <p class="text-muted text-sm">
+                <strong>28 Agents:</strong> XSS, SQLi, SSRF, IDOR, Auth, CORS, CSRF, FileUpload, XXE, RCE, BusinessLogic, RaceCondition, CachePoisoning, HTTPSmuggling, PrototypePollution, SubdomainTakeover, GraphQL, WebSocket, API, Mobile, Windows, DesktopApp, Recon, ReverseEngineering, ExploitDev, LLMSecurity, AppReview
+              </p>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+  });
+}
+
+function renderSessions(main, highlightId) {
+  get('/api/sessions').then(sessions => {
+    main.innerHTML = `
+      <div class="flex-between mb">
+        <h2>&#128196; Hunt Sessions (${sessions.length})</h2>
+        <button onclick="showPage('hunt')">&#128269; New Hunt</button>
+      </div>
+      ${sessions.length === 0 ? '<div class="card text-center text-muted"><p>No sessions yet. Start your first hunt!</p></div>' : ''}
+      <div id="sessions-table-container">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Target</th><th>Mode</th><th>Status</th><th>Phase</th><th>Findings</th><th>Started</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            ${sessions.map(s => `
+              <tr ${s.id === highlightId ? 'style="background:rgba(59,130,246,0.1);"' : ''}>
+                <td>#${s.id}</td>
+                <td><strong>${htmlEscape(s.target_name || 'Unknown')}</strong><br><span class="text-muted text-sm">${htmlEscape((s.target_url || '').substring(0, 50))}</span></td>
+                <td><span class="badge badge-${s.mode === 'bounty' ? 'high' : s.mode === 'pentest' ? 'medium' : 'info'}">${s.mode}</span></td>
+                <td><span class="badge badge-${s.status === 'completed' ? 'completed' : s.status === 'running' ? 'running' : 'pending'}">${s.status}</span></td>
+                <td><span class="text-sm">${s.current_phase}</span></td>
+                <td><strong>${s.findings_count}</strong></td>
+                <td class="text-muted text-sm">${s.started_at || '-'}</td>
+                <td>
+                  <button class="btn-sm btn-outline" onclick="viewSession(${s.id})">View</button>
+                  ${s.status !== 'completed' ? `<button class="btn-sm btn-outline" onclick="resumeHunt(${s.id})">Resume</button>` : ''}
+                  <button class="btn-sm btn-danger" onclick="deleteSession(${s.id})">X</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    if (highlightId) viewSession(highlightId);
+  });
+}
+
+function renderTargets(main) {
+  get('/api/targets').then(targets => {
+    main.innerHTML = `
+      <div class="flex-between mb">
+        <h2>&#127919; Targets (${targets.length})</h2>
+        <button onclick="showAddTargetForm()">+ Add Target</button>
+      </div>
+      <div id="add-target-form" class="card hidden">
+        <div class="card-header">Add Target</div>
+        <div class="row">
+          <div class="form-group"><label>URL *</label><input id="new-target-url" placeholder="https://app.example.com"></div>
+          <div class="form-group"><label>Name</label><input id="new-target-name" placeholder="My Target"></div>
+        </div>
+        <div class="row">
+          <div class="form-group"><label>Program</label><input id="new-target-program" placeholder="e.g. HackerOne - Corp"></div>
+          <div class="form-group"><label>Type</label><select id="new-target-type"><option value="web">Web</option><option value="api">API</option><option value="mobile">Mobile</option><option value="network">Network</option></select></div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="addTarget()">Save Target</button>
+          <button class="btn-outline" onclick="document.getElementById('add-target-form').classList.add('hidden')">Cancel</button>
+        </div>
+      </div>
+      ${targets.length === 0 ? '<div class="card text-center text-muted"><p>No targets saved yet.</p></div>' : ''}
+      <div class="grid grid-2">
+        ${targets.map(t => `
+          <div class="card">
+            <div class="flex-between">
+              <div class="card-header">${htmlEscape(t.name)}</div>
+              <span class="badge badge-info">${t.target_type || 'web'}</span>
+            </div>
+            <p><strong>URL:</strong> ${htmlEscape(t.url)}</p>
+            ${t.program_name ? `<p><strong>Program:</strong> ${htmlEscape(t.program_name)}</p>` : ''}
+            <p><strong>Scope In:</strong> ${htmlEscape(t.scope_in || '*')}</p>
+            ${t.scope_out ? `<p><strong>Scope Out:</strong> ${htmlEscape(t.scope_out)}</p>` : ''}
+            ${t.tech_stack ? `<p><strong>Tech Stack:</strong> ${htmlEscape(t.tech_stack)}</p>` : ''}
+            <p class="text-muted text-sm">Created: ${t.created_at}</p>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+              <button class="btn-sm" onclick="quickHunt('${t.url.replace(/'/g, "\\'")}','${(t.name || '').replace(/'/g, "\\'")}','${(t.program_name || '').replace(/'/g, "\\'")}','${t.target_type}')">Hunt Now</button>
+              <button class="btn-sm btn-danger" onclick="deleteTarget(${t.id})">Delete</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  });
+}
+
+function renderFindings(main) {
+  get('/api/findings').then(findings => {
+    const filterHTML = `
+      <div class="flex-between mb" style="align-items:center;flex-wrap:wrap;">
+        <h2>&#9888; All Findings (${findings.length})</h2>
+        <div style="display:flex;gap:8px;">
+          <select id="finding-filter-severity" onchange="filterFindings()">
+            <option value="all">All Severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="info">Info</option>
+          </select>
+          <select id="finding-filter-type" onchange="filterFindings()">
+            <option value="all">All Types</option>
+            ${[...new Set(findings.map(f => f.vulnerability_type))].map(t => `<option value="${t}">${t}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    `;
+
+    main.innerHTML = `
+      ${filterHTML}
+      ${findings.length === 0 ? '<div class="card text-center text-muted"><p>No findings yet. Start a hunt!</p></div>' : ''}
+      <div class="grid grid-2" id="findings-grid">
+        ${findings.map(f => `
+          <div class="card finding-card" data-severity="${f.severity}" data-type="${f.vulnerability_type}">
+            <div class="flex-between">
+              <h3 style="font-size:15px;">${htmlEscape(f.title)}</h3>
+              <span class="badge badge-${f.severity}">${f.severity}</span>
+            </div>
+            <p class="text-muted text-sm mt">
+              Target: ${htmlEscape(f.target_url || 'Unknown')} |
+              Type: ${f.vulnerability_type} |
+              CVSS: <strong>${f.cvss_score}</strong>
+              ${f.is_zero_day ? ' | <span style="color:var(--zeroday);">ZERO-DAY</span>' : ''}
+              ${f.has_poc ? ' | <span style="color:var(--accent);">PoC</span>' : ''}
+            </p>
+            <p class="mt text-sm">${htmlEscape((f.description || '').substring(0, 200))}${f.description && f.description.length > 200 ? '...' : ''}</p>
+            <p class="mt text-sm"><strong>Endpoint:</strong> <code>${f.method} ${htmlEscape(f.endpoint || 'N/A')}</code></p>
+            ${f.payload_used ? `<p class="text-sm"><strong>Payload:</strong> <code>${htmlEscape(f.payload_used)}</code></p>` : ''}
+            <p class="text-muted text-sm mt">Agent: ${f.agent_name || 'Unknown'} &middot; ${f.discovered_at}</p>
+            ${f.remediation ? `<p class="text-sm mt"><strong>Fix:</strong> ${htmlEscape(f.remediation.substring(0, 150))}${f.remediation.length > 150 ? '...' : ''}</p>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  });
+}
+
+function filterFindings() {
+  const sev = document.getElementById('finding-filter-severity')?.value || 'all';
+  const typ = document.getElementById('finding-filter-type')?.value || 'all';
+  document.querySelectorAll('.finding-card').forEach(card => {
+    const matchSev = sev === 'all' || card.dataset.severity === sev;
+    const matchType = typ === 'all' || card.dataset.type === typ;
+    card.style.display = matchSev && matchType ? '' : 'none';
+  });
+}
+
+function renderVault(main) {
+  get('/api/credentials').then(creds => {
+    main.innerHTML = `
+      <div class="flex-between mb">
+        <h2>&#128274; Credential Vault (${creds.length})</h2>
+        <button onclick="showAddCredentialForm()">+ Store Credential</button>
+      </div>
+      <div id="add-credential-form" class="card hidden">
+        <div class="card-header">Store Credential</div>
+        <div class="form-group"><label>Target Name *</label><input id="cred-target" placeholder="e.g., my-app"></div>
+        <div class="row">
+          <div class="form-group"><label>Username</label><input id="cred-username" placeholder="user@example.com"></div>
+          <div class="form-group"><label>Password</label><input id="cred-password" type="password" placeholder="password"></div>
+        </div>
+        <div class="row">
+          <div class="form-group"><label>Cookie</label><input id="cred-cookie" placeholder="session=abc123"></div>
+          <div class="form-group"><label>API Key</label><input id="cred-apikey" placeholder="api-key"></div>
+        </div>
+        <div class="form-group"><label>Notes</label><input id="cred-notes" placeholder="Additional info"></div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="storeCredential()">Save</button>
+          <button class="btn-outline" onclick="document.getElementById('add-credential-form').classList.add('hidden')">Cancel</button>
+        </div>
+      </div>
+      ${creds.length === 0 ? '<div class="card text-center text-muted"><p>No credentials stored. Credentials are encrypted at rest.</p></div>' : ''}
+      <div class="grid grid-2">
+        ${creds.map(c => `
+          <div class="card">
+            <div class="card-header">${htmlEscape(c.target_name)}</div>
+            <p><strong>Username:</strong> ${c.username ? htmlEscape(c.username) : '<span class="text-muted">not set</span>'}</p>
+            <p><strong>Cookie:</strong> ${c.cookie ? htmlEscape(c.cookie.substring(0, 30)) + '...' : '<span class="text-muted">not set</span>'}</p>
+            <p><strong>Password:</strong> ${c.password_encrypted ? '&#128274; Encrypted' : '<span class="text-muted">not set</span>'}</p>
+            ${c.notes ? `<p><strong>Notes:</strong> ${htmlEscape(c.notes)}</p>` : ''}
+            <p class="text-muted text-sm">Updated: ${c.updated_at}</p>
+            <button class="btn-sm btn-danger mt" onclick="deleteCredential('${c.target_name.replace(/'/g, "\\'")}')">Delete</button>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  });
+}
+
+function renderPatterns(main) {
+  get('/api/patterns').then(patterns => {
+    main.innerHTML = `
+      <h2 style="margin-bottom:20px;">&#128218; Attack Patterns (${patterns.length})</h2>
+      ${patterns.length === 0 ? '<div class="card text-center text-muted"><p>No patterns yet. Patterns are learned automatically from successful hunts.</p></div>' : ''}
+      <table>
+        <thead><tr><th>Name</th><th>Type</th><th>Vuln</th><th>Tech Stack</th><th>Effectiveness</th><th>Used</th><th>Success</th></tr></thead>
+        <tbody>
+          ${patterns.map(p => `
+            <tr>
+              <td><strong>${htmlEscape(p.name)}</strong></td>
+              <td>${p.pattern_type}</td>
+              <td><span class="badge badge-info">${p.vulnerability_type}</span></td>
+              <td>${htmlEscape(p.tech_stack || '-')}</td>
+              <td><span class="badge badge-${p.effectiveness === 'confirmed' ? 'completed' : 'pending'}">${p.effectiveness}</span></td>
+              <td>${p.times_used}</td>
+              <td>${p.times_succeeded}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  });
+}
+
+function renderLogs(main) {
+  get('/api/learning-logs').then(logs => {
+    main.innerHTML = `
+      <h2 style="margin-bottom:20px;">&#128221; Learning Logs (${logs.length})</h2>
+      ${logs.length === 0 ? '<div class="card text-center text-muted"><p>No learning logs yet. Logs are generated after each completed hunt.</p></div>' : ''}
+      ${logs.map(l => `
+        <div class="card">
+          <div class="card-header">${htmlEscape(l.category)}</div>
+          <p class="text-muted text-sm">Session: ${l.session_id || 'N/A'} &middot; ${l.created_at}</p>
+          ${l.tags ? `<p class="text-sm">Tags: ${l.tags.split(',').map(t => `<span class="badge badge-info" style="margin:2px;">${t.trim()}</span>`).join(' ')}</p>` : ''}
+          <pre>${htmlEscape(l.content.substring(0, 1000))}${l.content.length > 1000 ? '...' : ''}</pre>
+        </div>
+      `).join('')}
+    `;
+  });
+}
+
+// === ACTIONS ===
+
+async function startHunt() {
+  const url = document.getElementById('hunt-url').value.trim();
+  const name = document.getElementById('hunt-name').value.trim() || url;
+  const program = document.getElementById('hunt-program').value.trim();
+  const mode = document.getElementById('hunt-mode').value;
+  const type = document.getElementById('hunt-type').value;
+  const scopeIn = document.getElementById('hunt-scope-in').value.trim() || '*';
+  const scopeOut = document.getElementById('hunt-scope-out').value.trim();
+  const errorDiv = document.getElementById('hunt-error');
+
+  if (!url) { errorDiv.textContent = 'Target URL is required'; errorDiv.classList.remove('hidden'); return; }
+  errorDiv.classList.add('hidden');
+
+  try {
+    const targetRes = await post('/api/targets', { name, url, program_name: program, scope_in: scopeIn, scope_out: scopeOut, target_type: type });
+    const sessionRes = await post('/api/sessions', { target_id: targetRes.id, mode });
+    const startRes = await post(`/api/sessions/${sessionRes.id}/start`);
+    updateHeaderStats();
+    viewSessionLive(sessionRes.id);
+  } catch(e) {
+    errorDiv.textContent = 'Error: ' + e.message;
+    errorDiv.classList.remove('hidden');
+  }
+}
+
+async function quickHunt(url, name, program, type) {
+  const targetRes = await post('/api/targets', { name, url, program_name: program, target_type: type });
+  const sessionRes = await post('/api/sessions', { target_id: targetRes.id, mode: 'bounty' });
+  await post(`/api/sessions/${sessionRes.id}/start`);
+  updateHeaderStats();
+  viewSessionLive(sessionRes.id);
+}
+
+async function resumeHunt(sessionId) {
+  await post(`/api/sessions/${sessionId}/resume`);
+  updateHeaderStats();
+  viewSessionLive(sessionId);
+}
+
+async function deleteSession(sessionId) {
+  if (!confirm('Delete this session and all its findings?')) return;
+  await del(`/api/sessions/${sessionId}`);
+  updateHeaderStats();
+  showPage(currentPage);
+}
+
+async function deleteTarget(targetId) {
+  if (!confirm('Delete this target and all associated sessions?')) return;
+  await del(`/api/targets/${targetId}`);
+  updateHeaderStats();
+  showPage(currentPage);
+}
+
+async function addTarget() {
+  const url = document.getElementById('new-target-url').value.trim();
+  const name = document.getElementById('new-target-name').value.trim();
+  const program = document.getElementById('new-target-program').value.trim();
+  const type = document.getElementById('new-target-type').value;
+  if (!url) return alert('URL is required');
+  await post('/api/targets', { name: name || url, url, program_name: program, target_type: type });
+  updateHeaderStats();
+  showPage('targets');
+}
+
+function showAddTargetForm() {
+  document.getElementById('add-target-form').classList.toggle('hidden');
+}
+
+function showAddCredentialForm() {
+  document.getElementById('add-credential-form').classList.toggle('hidden');
+}
+
+async function storeCredential() {
+  const target_name = document.getElementById('cred-target').value.trim();
+  if (!target_name) return alert('Target name is required');
+  await post('/api/credentials', {
+    target_name,
+    username: document.getElementById('cred-username').value.trim(),
+    password: document.getElementById('cred-password').value,
+    cookie: document.getElementById('cred-cookie').value.trim(),
+    api_key: document.getElementById('cred-apikey').value.trim(),
+    notes: document.getElementById('cred-notes').value.trim()
+  });
+  showPage('vault');
+}
+
+async function deleteCredential(targetName) {
+  if (!confirm('Delete credentials for ' + targetName + '?')) return;
+  await del(`/api/credentials/${targetName}`);
+  showPage('vault');
+}
+
+function useTarget(url, name, program, scopeIn, scopeOut, type) {
+  document.getElementById('hunt-url').value = url;
+  document.getElementById('hunt-name').value = name;
+  document.getElementById('hunt-program').value = program;
+  document.getElementById('hunt-scope-in').value = scopeIn;
+  document.getElementById('hunt-scope-out').value = scopeOut;
+  document.getElementById('hunt-type').value = type;
+  showPage('hunt');
+}
+
+// === SESSION VIEW ===
+
+async function viewSession(sessionId) {
+  const modal = document.getElementById('live-hunt-modal');
+  const content = document.getElementById('live-hunt-content');
+  modal.classList.add('active');
+  content.innerHTML = '<p>Loading session...</p>';
+  loadSessionDetail(sessionId, content);
+  modal.onclick = (e) => { if (e.target === modal) { modal.classList.remove('active'); currentSessionId = null; } };
+}
+
+async function viewSessionLive(sessionId) {
+  currentSessionId = sessionId;
+  const modal = document.getElementById('live-hunt-modal');
+  const content = document.getElementById('live-hunt-content');
+  modal.classList.add('active');
+  content.innerHTML = '<p>Starting hunt...</p>';
+  await loadSessionDetail(sessionId, content);
+  // Poll for updates
+  if (activeHuntInterval) clearInterval(activeHuntInterval);
+  activeHuntInterval = setInterval(() => loadSessionDetail(sessionId, content, true), 2000);
+  modal.onclick = (e) => { if (e.target === modal) { modal.classList.remove('active'); currentSessionId = null; if (activeHuntInterval) clearInterval(activeHuntInterval); } };
+}
+
+function updateLiveHuntView(data) {
+  if (currentSessionId && data.session_id === currentSessionId) {
+    const content = document.getElementById('live-hunt-content');
+    loadSessionDetail(currentSessionId, content, true);
+  }
+}
+
+async function loadSessionDetail(sessionId, container, silent = false) {
+  try {
+    const session = await get(`/api/sessions/${sessionId}`);
+    const targetName = session.target_name || 'Unknown Target';
+    const targetUrl = session.target_url || 'unknown';
+    const phases = session.phases || [];
+    const findings = session.findings || [];
+    const events = session.events || [];
+    const phases_ordered = ['INIT','MEMORY_LOAD','TARGET_INGEST','APP_UNDERSTANDING','RECON','AGENT_DEPLOY','DYNAMIC_TEST','VULN_ASSESS','LEARNING','REPORT'];
+    let minCvss = '-';
+    try { const cfg = typeof session.config === 'string' ? JSON.parse(session.config) : (session.config || {}); minCvss = cfg.min_cvss || '-'; } catch(e) {}
+
+    container.innerHTML = `
+      <div class="flex-between" style="margin-bottom:20px;">
+        <h2>Hunt #${session.id}: ${htmlEscape(targetName)}</h2>
+        <span class="badge badge-${session.status === 'running' ? 'running' : session.status === 'completed' ? 'completed' : 'pending'}">${session.status}</span>
+      </div>
+
+      <p><strong>Target:</strong> ${htmlEscape(targetUrl)} &middot; <strong>Mode:</strong> ${session.mode} &middot; <strong>Started:</strong> ${session.started_at}</p>
+      <p><strong>Min CVSS:</strong> ${minCvss} &middot; <strong>Findings:</strong> ${findings.length}</p>
+
+      <h4 style="margin:16px 0 8px;">Phase Progress</h4>
+      <div class="phase-bar">
+        ${phases_ordered.map(p => {
+          const ph = phases.find(x => x.phase_name === p);
+          const status = ph?.status || 'pending';
+          return `<div class="phase-dot ${status}" title="${p}: ${status}"></div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:16px;">
+        ${phases_ordered.map(p => `<span>${p.replace(/_/g,'<wbr>')}</span>`).join('')}
+      </div>
+
+      <div style="display:flex;gap:12px;">
+        <button onclick="downloadReport(${session.id}, 'json')" class="btn-sm btn-outline">Download JSON Report</button>
+        <button onclick="downloadReport(${session.id}, 'markdown')" class="btn-sm btn-outline">Download Markdown Report</button>
+        ${session.status !== 'running' && session.status !== 'completed' ? `<button onclick="resumeHunt(${session.id})" class="btn-sm">Resume Hunt</button>` : ''}
+        ${session.status === 'running' ? `<button onclick="abortHunt(${session.id})" class="btn-sm btn-danger">Abort</button>` : ''}
+      </div>
+
+      ${findings.length > 0 ? `
+        <h4 style="margin:20px 0 8px;">Findings (${findings.length})</h4>
+        <div style="max-height:300px;overflow-y:auto;">
+          ${findings.map(f => `
+            <div class="card" style="margin-bottom:8px;">
+              <div class="flex-between">
+                <strong>${htmlEscape(f.title)}</strong>
+                <span class="badge badge-${f.severity}">${f.severity} (${f.cvss_score})</span>
+              </div>
+              <p class="text-sm text-muted">${f.vulnerability_type} &middot; ${f.endpoint || 'N/A'} &middot; ${f.agent_name}</p>
+            </div>
+          `).join('')}
+        </div>
+      ` : '<p class="text-muted text-sm mt">No findings yet...</p>'}
+
+      <h4 style="margin:20px 0 8px;">Event Log</h4>
+      <div class="event-log" id="session-event-log">
+        ${events.map(e => `
+          <div class="event type-${e.event_type}">
+            <span class="time">${(e.created_at || '').substring(11,19) || ''}</span>
+            <span class="phase">${e.phase || ''}</span>
+            <span class="msg">${htmlEscape(e.message)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    // Scroll event log to bottom
+    const log = document.getElementById('session-event-log');
+    if (log) log.scrollTop = log.scrollHeight;
+  } catch(e) {
+    if (!silent) container.innerHTML = `<p style="color:var(--critical);">Error loading session: ${e.message}</p>`;
+  }
+}
+
+async function abortHunt(sessionId) {
+  await del(`/api/sessions/${sessionId}`);
+  updateHeaderStats();
+  document.getElementById('live-hunt-modal').classList.remove('active');
+  currentSessionId = null;
+  if (activeHuntInterval) clearInterval(activeHuntInterval);
+  showPage('dashboard');
+}
+
+function downloadReport(sessionId, format) {
+  window.open(`/api/sessions/${sessionId}/report/${format}`, '_blank');
+}
+
+// Utility
+function htmlEscape(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// === INIT ===
+updateHeaderStats();
+showPage('dashboard');
+setInterval(updateHeaderStats, 10000);
+</script>
+</body>
+</html>
