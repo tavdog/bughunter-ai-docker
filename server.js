@@ -106,82 +106,122 @@ function buildAuthArgs(cred) {
 async function tryFormLogin(target, cred, session_id) {
   if (!cred || !cred.username || !cred.password) return null;
 
-  const loginPaths = ['/login', '/signin', '/auth/login', '/admin/login', '/user/login', '/account/login'];
+  const baseUrl = target.url.replace(/\/$/, '');
   const cookieJar = `/tmp/bh-cookies-${session_id}.txt`;
+  const fs = require('fs');
 
-  for (const loginPath of loginPaths) {
+  try { fs.unlinkSync(cookieJar); } catch(e) {}
+
+  // Step 1: Follow redirects from / to find the real login page
+  let loginPageHtml = '';
+  let loginPageUrl = '';
+  const { stdout: redirectHeaders } = await runCommand('curl', [
+    '-sk', '-L', '-c', cookieJar,
+    '-D', '-', '-o', '/tmp/bh-login-page.html',
+    '--connect-timeout', '10', '--max-time', '15',
+    baseUrl + '/'
+  ], { timeout: 20000 });
+
+  // Parse the final URL from the redirect chain
+  try {
+    loginPageHtml = fs.readFileSync('/tmp/bh-login-page.html', 'utf8');
+  } catch(e) {}
+
+  // Also try common login paths directly
+  const loginPaths = ['/login', '/signin', '/auth/login', '/admin/login', '/user/login', '/account/login'];
+  for (const lp of loginPaths) {
     try {
-      const loginUrl = `${target.url.replace(/\/$/, '')}${loginPath}`;
-      // Fetch the login page to find form fields + CSRF token
-      const { stdout: loginPage } = await runCommand('curl', ['-sk', '-L', '-c', cookieJar, '--connect-timeout', '10', '--max-time', '15', loginUrl], { timeout: 20000 });
-      if (!loginPage) continue;
-
-      // Extract common CSRF token patterns
-      let csrfToken = '';
-      const csrfPatterns = [/name="csrf_token"[^>]*value="([^"]+)"/i, /name="_csrf"[^>]*value="([^"]+)"/i, /name="authenticity_token"[^>]*value="([^"]+)"/i, /name="csrfmiddlewaretoken"[^>]*value="([^"]+)"/i, /name="__RequestVerificationToken"[^>]*value="([^"]+)"/i];
-      for (const re of csrfPatterns) {
-        const m = loginPage.match(re);
-        if (m) { csrfToken = m[1]; break; }
-      }
-
-      // Build form POST data
-      const params = new URLSearchParams();
-      params.append('username', cred.username);
-      params.append('password', cred.password);
-      if (csrfToken) params.append('csrf_token', csrfToken);
-
-      // Try common field name variations
-      const altFields = [
-        ['user', 'pass'], ['email', 'password'], ['login', 'pwd'],
-        ['user_login', 'user_pass'], ['log', 'pwd'], ['Username', 'Password']
-      ];
-      let postData = params.toString();
-      // Also build alternative post bodies
-      const altBodies = altFields.map(([u, p]) => {
-        const p2 = new URLSearchParams();
-        p2.append(u, cred.username);
-        p2.append(p, cred.password);
-        if (csrfToken) {
-          const csrfNames = ['csrf_token', '_csrf', 'authenticity_token', 'csrfmiddlewaretoken', '__RequestVerificationToken'];
-          for (const cn of csrfNames) { p2.append(cn, csrfToken); }
-        }
-        return p2.toString();
-      });
-
-      // Try login with the default params
-      const bodies = [postData, ...altBodies];
-      for (const body of bodies) {
-        const { stdout: loginResp, stderr } = await runCommand('curl', [
-          '-sk', '-L', '-c', cookieJar, '-b', cookieJar,
-          '--connect-timeout', '10', '--max-time', '15',
-          '-d', body,
-          '-H', 'Content-Type: application/x-www-form-urlencoded',
-          '-w', '%{http_code}',
-          '-o', '/dev/null',
-          loginUrl
-        ], { timeout: 20000 });
-
-        const code = loginResp.trim();
-        if (code === '302' || code === '301' || code === '303' || code === '200' || code === '307') {
-          // Check if we got a session cookie
-          try {
-            const fs = require('fs');
-            const cookies = fs.readFileSync(cookieJar, 'utf8');
-            // Look for session-like cookies
-            const sessionCookies = cookies.split('\n').filter(l =>
-              l.includes('session') || l.includes('auth') || l.includes('token') || l.includes('jwt') || l.includes('PHPSESSID') || l.includes('JSESSIONID')
-            ).map(l => l.split('\t').slice(-1)[0].trim()).join('; ');
-            if (sessionCookies) {
-              return sessionCookies;
-            }
-            // If no session cookie found, return all cookies
-            const allCookies = cookies.split('\n').filter(l => l && !l.startsWith('#')).map(l => l.split('\t').slice(-1)[0].trim()).join('; ');
-            if (allCookies) return allCookies;
-          } catch(e) {}
-        }
+      const { stdout: page } = await runCommand('curl', ['-sk', '-L', '-c', cookieJar, '-b', cookieJar, '--connect-timeout', '5', '--max-time', '10', baseUrl + lp], { timeout: 15000 });
+      if (page && /password|login|sign.?in/i.test(page) && page !== loginPageHtml) {
+        loginPageHtml = page;
+        loginPageUrl = baseUrl + lp;
+        break;
       }
     } catch(e) {}
   }
+
+  // If we couldn't find a login page from redirects or common paths, use whatever we got from /
+  if (!loginPageHtml) return null;
+  if (!loginPageUrl) loginPageUrl = baseUrl + '/login';
+
+  // Step 2: Find the form action URL and field names
+  let formAction = loginPageUrl;
+  const actionMatch = loginPageHtml.match(/<form[^>]+action=["']([^"']+)["']/i);
+  if (actionMatch) {
+    const action = actionMatch[1];
+    formAction = action.startsWith('http') ? action : (baseUrl + (action.startsWith('/') ? '' : '/') + action);
+  }
+
+  // Step 3: Extract CSRF token
+  let csrfToken = '';
+  const csrfPatterns = [
+    /name=["']csrf_token["'][^>]+value=["']([^"']+)["']/i,
+    /name=["']_csrf["'][^>]+value=["']([^"']+)["']/i,
+    /name=["']authenticity_token["'][^>]+value=["']([^"']+)["']/i,
+    /name=["']csrfmiddlewaretoken["'][^>]+value=["']([^"']+)["']/i,
+    /name=["']__RequestVerificationToken["'][^>]+value=["']([^"']+)["']/i,
+    /name=["']nonce["'][^>]+value=["']([^"']+)["']/i,
+  ];
+  for (const re of csrfPatterns) {
+    const m = loginPageHtml.match(re);
+    if (m) { csrfToken = m[1]; break; }
+  }
+
+  // Step 4: Guess the username/password field names from the form HTML
+  let userField = 'username', passField = 'password';
+  const formSection = loginPageHtml.match(/<form[\s\S]*?<\/form>/i);
+  const html = formSection ? formSection[0] : loginPageHtml;
+  const inputPatterns = [/name=["']([^"']*)["'][^>]*type=["'](?:text|email)["']/gi, /type=["'](?:text|email)["'][^>]*name=["']([^"']*)["']/gi];
+  for (const re of inputPatterns) {
+    const m = re.exec(html);
+    if (m) { userField = m[1]; break; }
+  }
+  if (/name=["']([^"']*pass[^"']*)["']/i.test(html)) {
+    userField = html.match(/name=["']([^"']*(?:user|email|login|name)[^"']*)["']/i)?.[1] || userField;
+    passField = html.match(/name=["']([^"']*pass[^"']*)["']/i)?.[1] || 'password';
+  }
+
+  // Step 5: Try login with detected field names + fallback combinations
+  const fieldCombos = [
+    [userField, passField],
+    ['username', 'password'], ['email', 'password'], ['user', 'pass'],
+    ['login', 'password'], ['user_login', 'user_pass'],
+  ];
+  for (const [uf, pf] of fieldCombos) {
+    if (fieldCombos.indexOf([uf, pf]) > 0 && uf === fieldCombos[0][0]) continue; // skip duplicates
+
+    const params = new URLSearchParams();
+    params.append(uf, cred.username);
+    params.append(pf, cred.password);
+    // Add CSRF token with common names
+    if (csrfToken) {
+      for (const cn of ['csrf_token', '_csrf', 'authenticity_token', 'csrfmiddlewaretoken', '__RequestVerificationToken', 'nonce']) {
+        if (loginPageHtml.includes(`name="${cn}"`) || loginPageHtml.includes(`name='${cn}'`)) {
+          params.append(cn, csrfToken);
+          break;
+        }
+      }
+    }
+
+    const { stdout: loginCode } = await runCommand('curl', [
+      '-sk', '-L', '-c', cookieJar, '-b', cookieJar,
+      '--connect-timeout', '10', '--max-time', '15',
+      '-d', params.toString(),
+      '-H', 'Content-Type: application/x-www-form-urlencoded',
+      '-w', '%{http_code}', '-o', '/dev/null',
+      formAction
+    ], { timeout: 20000 });
+
+    const code = loginCode.trim();
+    if (code === '302' || code === '301' || code === '303' || code === '307' || (code === '200' && !/password|login|sign.?in/i.test(loginPageHtml))) {
+      try {
+        const cookies = fs.readFileSync(cookieJar, 'utf8');
+        const allCookies = cookies.split('\n').filter(l => l && !l.startsWith('#') && !l.startsWith('HttpOnly_')).map(l => l.split('\t').slice(-1)[0].trim()).join('; ');
+        if (allCookies) return allCookies;
+      } catch(e) {}
+    }
+  }
+
   return null;
 }
 
