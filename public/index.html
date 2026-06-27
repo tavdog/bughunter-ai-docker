@@ -452,6 +452,27 @@ function renderNewHunt(main) {
                 <label>Scope Exclude (comma-separated)</label>
                 <input id="hunt-scope-out" placeholder="blog.example.com, status.example.com">
               </div>
+              <details style="margin-bottom:14px;">
+                <summary style="cursor:pointer;color:var(--text-muted);font-size:13px;padding:4px 0;">
+                  &#128274; Target Credentials (optional)
+                </summary>
+                <div style="padding:8px 0 0 0;">
+                  <div class="row">
+                    <div class="form-group">
+                      <label>Username</label>
+                      <input id="hunt-cred-user" placeholder="user@example.com">
+                    </div>
+                    <div class="form-group">
+                      <label>Password</label>
+                      <input id="hunt-cred-pass" type="password" placeholder="password">
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label>Cookie (session token, alternative to user/pass)</label>
+                    <input id="hunt-cred-cookie" placeholder="session=abc123; token=xyz">
+                  </div>
+                </div>
+              </details>
               <button onclick="startHunt()" style="width:100%;padding:14px;">&#128269; Start Hunt</button>
               <div id="hunt-error" class="hidden mt" style="color:var(--critical);"></div>
             </div>
@@ -759,6 +780,9 @@ async function startHunt() {
   const type = document.getElementById('hunt-type').value;
   const scopeIn = document.getElementById('hunt-scope-in').value.trim() || '*';
   const scopeOut = document.getElementById('hunt-scope-out').value.trim();
+  const credUser = document.getElementById('hunt-cred-user').value.trim();
+  const credPass = document.getElementById('hunt-cred-pass').value;
+  const credCookie = document.getElementById('hunt-cred-cookie').value.trim();
   const errorDiv = document.getElementById('hunt-error');
 
   if (!url) { errorDiv.textContent = 'Target URL is required'; errorDiv.classList.remove('hidden'); return; }
@@ -766,6 +790,17 @@ async function startHunt() {
 
   try {
     const targetRes = await post('/api/targets', { name, url, program_name: program, scope_in: scopeIn, scope_out: scopeOut, target_type: type });
+
+    // Save credentials if any were provided
+    if (credUser || credPass || credCookie) {
+      await post('/api/credentials', {
+        target_name: name || url,
+        username: credUser || undefined,
+        password: credPass || undefined,
+        cookie: credCookie || undefined
+      });
+    }
+
     const sessionRes = await post('/api/sessions', { target_id: targetRes.id, mode });
     const startRes = await post(`/api/sessions/${sessionRes.id}/start`);
     updateHeaderStats();
