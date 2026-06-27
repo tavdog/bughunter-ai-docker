@@ -120,14 +120,122 @@ function loadCredentials(target) {
 
 // Run Claude Code as AI backend
 const CLAUDE_BIN = '/root/.local/bin/claude';
-function claudeAvailable() {
-  try { require('fs').accessSync(CLAUDE_BIN, require('fs').constants.X_OK); return true; } catch { return false; }
+
+// AI provider configuration
+function getAIConfig() {
+  const db = require('./db');
+  try {
+    // Database settings take priority, env vars are fallbacks
+    const provider = db.getDb().prepare("SELECT value FROM config WHERE key = 'ai_provider'").get();
+    const model = db.getDb().prepare("SELECT value FROM config WHERE key = 'ai_model'").get();
+    const baseUrl = db.getDb().prepare("SELECT value FROM config WHERE key = 'ai_base_url'").get();
+    const encKey = db.getDb().prepare("SELECT value FROM config WHERE key = 'ai_api_key_encrypted'").get();
+
+    let apiKey = null;
+    if (encKey && encKey.value) {
+      apiKey = db.decrypt(encKey.value);
+    }
+
+    // Env var overrides (for backward compatibility)
+    const envKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY;
+
+    return {
+      provider: provider?.value || 'claude',
+      model: model?.value || process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+      baseUrl: baseUrl?.value || process.env.ANTHROPIC_BASE_URL || '',
+      apiKey: apiKey || envKey || ''
+    };
+  } catch(e) {
+    return { provider: 'claude', model: 'claude-sonnet-4-6', baseUrl: '', apiKey: '' };
+  }
 }
 
-async function runClaude(prompt, opts = {}) {
+function aiAvailable() {
+  const config = getAIConfig();
+  switch (config.provider) {
+    case 'claude':
+      if (config.apiKey) return true;
+      try { require('fs').accessSync(CLAUDE_BIN, require('fs').constants.X_OK); return true; } catch { return false; }
+    case 'openai':
+    case 'custom':
+      return !!config.apiKey;
+    case 'ollama':
+      return !!config.baseUrl;
+    default:
+      return false;
+  }
+}
+
+async function runAI(prompt, opts = {}) {
+  const config = getAIConfig();
   const timeout = opts.timeout || 120000;
-  const result = await runCommand(CLAUDE_BIN, ['-p', prompt], { timeout });
-  return result.stdout.trim();
+
+  switch (config.provider) {
+    case 'claude': {
+      // Claude Code binary (preferred) or direct API
+      if (!config.apiKey) {
+        const result = await runCommand(CLAUDE_BIN, ['-p', prompt], { timeout });
+        return result.stdout.trim();
+      }
+      // Use Anthropic API directly
+      const resp = await fetch(`${config.baseUrl || 'https://api.anthropic.com'}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': config.apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: config.model || 'claude-sonnet-4-6',
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: prompt }]
+        }),
+        signal: AbortSignal.timeout(timeout)
+      });
+      const data = await resp.json();
+      return data.content?.[0]?.text || JSON.stringify(data);
+    }
+
+    case 'openai': {
+      const resp = await fetch(`${config.baseUrl || 'https://api.openai.com'}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`
+        },
+        body: JSON.stringify({
+          model: config.model || 'gpt-4o',
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: prompt }]
+        }),
+        signal: AbortSignal.timeout(timeout)
+      });
+      const data = await resp.json();
+      return data.choices?.[0]?.message?.content || JSON.stringify(data);
+    }
+
+    case 'ollama':
+    case 'custom': {
+      const resp = await fetch(`${config.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(config.apiKey ? { 'Authorization': `Bearer ${config.apiKey}` } : {})
+        },
+        body: JSON.stringify({
+          model: config.model || 'llama3',
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: prompt }]
+        }),
+        signal: AbortSignal.timeout(timeout)
+      });
+      const data = await resp.json();
+      return data.choices?.[0]?.message?.content || JSON.stringify(data);
+    }
+
+    default:
+      throw new Error(`Unknown AI provider: ${config.provider}`);
+  }
 }
 
 // CVSS v3.1 base score calculator (simplified but real)
@@ -171,9 +279,13 @@ function toolAvailable(name) {
 
 // Health check
 app.get('/api/health', (req, res) => {
+  const config = getAIConfig();
+  const ready = aiAvailable();
   res.json({
     status: 'operational',
-    ai_backend: claudeAvailable() ? 'Claude Code (claude -p)' : 'none',
+    ai_backend: ready ? config.provider : 'none',
+    ai_model: ready ? config.model : null,
+    ai_configured: ready,
     tools: {
       subfinder: toolAvailable('subfinder'),
       httpx: toolAvailable('httpx'),
@@ -185,6 +297,49 @@ app.get('/api/health', (req, res) => {
     active_hunts: activeHunts.size,
     uptime: process.uptime()
   });
+});
+
+// === Settings ===
+app.get('/api/settings', (req, res) => {
+  const config = getAIConfig();
+  res.json({
+    provider: config.provider,
+    model: config.model,
+    base_url: config.baseUrl,
+    has_api_key: !!config.apiKey
+  });
+});
+
+app.post('/api/settings', (req, res) => {
+  const { provider, model, base_url, api_key } = req.body;
+  const d = db.getDb();
+
+  if (provider) d.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('ai_provider', ?)").run(provider);
+  if (model) d.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('ai_model', ?)").run(model);
+  if (base_url !== undefined) d.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('ai_base_url', ?)").run(base_url || '');
+  if (api_key !== undefined) {
+    const encrypted = api_key ? db.encrypt(api_key) : '';
+    d.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('ai_api_key_encrypted', ?)").run(encrypted);
+  }
+
+  const config = getAIConfig();
+  res.json({
+    provider: config.provider,
+    model: config.model,
+    base_url: config.baseUrl,
+    has_api_key: !!config.apiKey,
+    connected: aiAvailable()
+  });
+});
+
+app.post('/api/settings/test', async (req, res) => {
+  try {
+    const prompt = 'reply with exactly: ok';
+    const response = await runAI(prompt, { timeout: 15000 });
+    res.json({ success: true, response: response.substring(0, 100) });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
 });
 
 // === Targets ===
@@ -735,8 +890,8 @@ async function phaseAppUnderstanding(session, target, runner) {
   } catch (e) {}
 
   // Claude AI: intelligent application profiling
-  if (claudeAvailable()) {
-    notify(session.id, 'phase_detail', 'APP_UNDERSTANDING', 'Claude analyzing target for attack surface...');
+  if (aiAvailable()) {
+    notify(session.id, 'phase_detail', 'APP_UNDERSTANDING', 'AI analyzing target for attack surface...');
     try {
       const prompt = `You are a senior bug bounty hunter profiling a target web application for a security assessment.
 
@@ -762,8 +917,8 @@ HIGH_VALUE_TARGETS:
 PRIORITY_AGENTS: <comma-separated list of vulnerability types to prioritize, from: xss,sqli,ssrf,idor,auth,cors,csrf,file-upload,xxe,rce,business-logic,race-condition,graphql,llm-security>
 RECOMMENDATIONS: <2-3 specific testing recommendations>`;
 
-      const analysis = await runClaude(prompt, { timeout: 60000 });
-      notify(session.id, 'phase_detail', 'APP_UNDERSTANDING', `Claude analysis:\n${analysis.substring(0, 500)}`);
+      const analysis = await runAI(prompt, { timeout: 60000 });
+      notify(session.id, 'phase_detail', 'APP_UNDERSTANDING', `AI analysis:\n${analysis.substring(0, 500)}`);
 
       // Store analysis in session config
       db.getDb().prepare("UPDATE hunt_sessions SET config = json_set(config, '$.app_profile', ?) WHERE id = ?")
@@ -775,7 +930,7 @@ RECOMMENDATIONS: <2-3 specific testing recommendations>`;
         notify(session.id, 'phase_detail', 'APP_UNDERSTANDING', 'AI/LLM features detected — will deploy LLMSecurity agent');
       }
     } catch (e) {
-      notify(session.id, 'phase_detail', 'APP_UNDERSTANDING', `Claude analysis skipped: ${e.message}`);
+      notify(session.id, 'phase_detail', 'APP_UNDERSTANDING', `AI analysis skipped: ${e.message}`);
     }
   }
 
@@ -907,8 +1062,8 @@ async function runAgent(session, target, agent, authArgs = [], cred = null) {
   const probeData = await gatherAgentProbeData(session, targetUrl, agent, authArgs);
 
   // Then: use Claude for intelligent vulnerability analysis
-  if (claudeAvailable()) {
-    notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: Claude analyzing for ${agent.type} vulnerabilities...`);
+  if (aiAvailable()) {
+    notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: AI analyzing for ${agent.type} vulnerabilities...`);
     try {
       const findings = await claudeAgentAnalysis(session, target, agent, probeData, cred);
       findings.forEach(f => addFinding(session, f));
@@ -917,7 +1072,7 @@ async function runAgent(session, target, agent, authArgs = [], cred = null) {
       }
       return;
     } catch (e) {
-      notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: Claude error, falling back to probes — ${e.message}`);
+      notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: AI error, falling back to probes — ${e.message}`);
     }
   }
 
@@ -1013,8 +1168,8 @@ Respond with findings in this exact JSON format (one object per finding, or empt
 
 Only report real, credible findings. If nothing is clearly vulnerable, return []. Be honest — false positives waste time.`;
 
-  const response = await runClaude(prompt, { timeout: 90000 });
-  notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: Claude response received (${response.length} chars)`);
+  const response = await runAI(prompt, { timeout: 90000 });
+  notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: AI response received (${response.length} chars)`);
 
   // Parse Claude's JSON response
   try {
@@ -1038,7 +1193,7 @@ Only report real, credible findings. If nothing is clearly vulnerable, return []
       }));
     }
   } catch (e) {
-    notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: Could not parse Claude response as JSON`);
+    notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: Could not parse AI response as JSON`);
   }
   return [];
 }
@@ -1209,8 +1364,8 @@ async function phaseLearning(session, target) {
   const confirmed = findings.filter(f => f.severity === 'critical' || f.severity === 'high');
 
   // Claude: attack chain correlation and finding review
-  if (claudeAvailable() && findings.length > 0) {
-    notify(session.id, 'phase_detail', 'LEARNING', 'Claude analyzing findings for attack chains...');
+  if (aiAvailable() && findings.length > 0) {
+    notify(session.id, 'phase_detail', 'LEARNING', 'AI analyzing findings for attack chains...');
     try {
       const findingsSummary = findings.map(f =>
         `[${f.severity.toUpperCase()}] ${f.title} | Type: ${f.vulnerability_type} | CVSS: ${f.cvss_score} | Endpoint: ${f.endpoint} | Agent: ${f.agent_name}`
@@ -1230,16 +1385,16 @@ MISSED_OPPORTUNITIES: <what vulnerability types should be tested further, or "no
 TECHNIQUES_LEARNED: <what worked, what patterns are effective>
 PRIORITY_REMEDIATIONS: <top 3 things to fix first, one per line>`;
 
-      const analysis = await runClaude(prompt, { timeout: 60000 });
-      notify(session.id, 'phase_detail', 'LEARNING', `Claude assessment:\n${analysis.substring(0, 500)}`);
+      const analysis = await runAI(prompt, { timeout: 60000 });
+      notify(session.id, 'phase_detail', 'LEARNING', `AI assessment:\n${analysis.substring(0, 500)}`);
 
       // Save analysis to learning log
-      db.saveLearningLog(session.id, 'claude_assessment',
-        `## Claude Analysis — ${target.url}\n\n${analysis}`,
-        'claude,assessment'
+      db.saveLearningLog(session.id, 'ai_assessment',
+        `## AI Analysis — ${target.url}\n\n${analysis}`,
+        'ai,assessment'
       );
     } catch (e) {
-      notify(session.id, 'phase_detail', 'LEARNING', `Claude assessment skipped: ${e.message}`);
+      notify(session.id, 'phase_detail', 'LEARNING', `AI assessment skipped: ${e.message}`);
     }
   }
 

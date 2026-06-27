@@ -6,12 +6,13 @@ services:
     ports:
       - "443:443"
     environment:
-      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
-      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      # Optional: protect the web UI with basic auth (set both to enable)
       - BUGHUNTER_USER=${BUGHUNTER_USER:-}
       - BUGHUNTER_PASS=${BUGHUNTER_PASS:-}
+
+      # Optional: override the vault encryption key (auto-generated if blank)
       - VAULT_ENCRYPTION_KEY=${VAULT_ENCRYPTION_KEY:-}
+
       - NODE_ENV=production
       - PORT=3000
       - DB_PATH=/data/bughunter.db
