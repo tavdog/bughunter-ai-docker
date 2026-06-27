@@ -717,7 +717,7 @@ function renderVault(main) {
             <div class="card-header">${htmlEscape(c.target_name)}</div>
             <p><strong>Username:</strong> ${c.username ? htmlEscape(c.username) : '<span class="text-muted">not set</span>'}</p>
             <p><strong>Cookie:</strong> ${c.cookie ? htmlEscape(c.cookie.substring(0, 30)) + '...' : '<span class="text-muted">not set</span>'}</p>
-            <p><strong>Password:</strong> ${c.password_encrypted ? '&#128274; Encrypted' : '<span class="text-muted">not set</span>'}</p>
+            <p><strong>Password:</strong> ${c.has_password ? '&#128274; Stored' : '<span class="text-muted">not set</span>'}</p>
             ${c.notes ? `<p><strong>Notes:</strong> ${htmlEscape(c.notes)}</p>` : ''}
             <p class="text-muted text-sm">Updated: ${c.updated_at}</p>
             <button class="btn-sm btn-danger mt" onclick="deleteCredential('${c.target_name.replace(/'/g, "\\'")}')">Delete</button>

@@ -333,8 +333,19 @@ function getCredential(target_name) {
 }
 
 function getAllCredentials() {
-  const rows = getDb().prepare('SELECT id, target_name, username, cookie, jwt, notes, created_at, updated_at FROM credentials ORDER BY target_name').all();
-  return rows;
+  const rows = getDb().prepare('SELECT id, target_name, username, cookie, jwt, password_encrypted, api_key_encrypted, notes, created_at, updated_at FROM credentials ORDER BY target_name').all();
+  return rows.map(r => ({
+    id: r.id,
+    target_name: r.target_name,
+    username: r.username,
+    cookie: r.cookie,
+    jwt: r.jwt,
+    has_password: !!r.password_encrypted,
+    has_api_key: !!r.api_key_encrypted,
+    notes: r.notes,
+    created_at: r.created_at,
+    updated_at: r.updated_at
+  }));
 }
 
 // Pattern operations
