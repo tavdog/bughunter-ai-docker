@@ -73,11 +73,11 @@ RUN mkdir -p /data /var/www/bughunter.clodhost.com/public/reports && \
 # Configure Apache
 RUN a2enmod ssl headers proxy proxy_http proxy_wstunnel rewrite
 
-COPY apache-site.conf /etc/apache2/sites-available/bughunter.conf
+COPY docker/apache-site.conf /etc/apache2/sites-available/bughunter.conf
 RUN a2dissite 000-default.conf default-ssl.conf 2>/dev/null || true && \
     a2ensite bughunter.conf
 
-COPY entrypoint.sh /entrypoint.sh
+COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 443

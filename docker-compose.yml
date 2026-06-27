@@ -2,7 +2,7 @@ services:
   bughunter:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     ports:
       - "443:443"
     environment:
