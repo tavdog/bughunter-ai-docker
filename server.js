@@ -85,9 +85,6 @@ function runCommand(cmd, args, opts = {}) {
 function buildAuthArgs(cred) {
   const args = [];
   if (!cred) return args;
-  if (cred.username && cred.password) {
-    args.push('-u', `${cred.username}:${cred.password}`);
-  }
   if (cred.cookie) {
     args.push('-H', `Cookie: ${cred.cookie}`);
   }
@@ -97,7 +94,95 @@ function buildAuthArgs(cred) {
   if (cred.api_key) {
     args.push('-H', `X-API-Key: ${cred.api_key}`);
   }
+  // Basic auth is tried first, then form login if needed
+  if (cred.username && cred.password) {
+    args.push('-u', `${cred.username}:${cred.password}`);
+    args.push('--anyauth');  // try digest, ntlm, etc.
+  }
   return args;
+}
+
+// Try form-based login and return a session cookie
+async function tryFormLogin(target, cred, session_id) {
+  if (!cred || !cred.username || !cred.password) return null;
+
+  const loginPaths = ['/login', '/signin', '/auth/login', '/admin/login', '/user/login', '/account/login'];
+  const cookieJar = `/tmp/bh-cookies-${session_id}.txt`;
+
+  for (const loginPath of loginPaths) {
+    try {
+      const loginUrl = `${target.url.replace(/\/$/, '')}${loginPath}`;
+      // Fetch the login page to find form fields + CSRF token
+      const { stdout: loginPage } = await runCommand('curl', ['-sk', '-L', '-c', cookieJar, '--connect-timeout', '10', '--max-time', '15', loginUrl], { timeout: 20000 });
+      if (!loginPage) continue;
+
+      // Extract common CSRF token patterns
+      let csrfToken = '';
+      const csrfPatterns = [/name="csrf_token"[^>]*value="([^"]+)"/i, /name="_csrf"[^>]*value="([^"]+)"/i, /name="authenticity_token"[^>]*value="([^"]+)"/i, /name="csrfmiddlewaretoken"[^>]*value="([^"]+)"/i, /name="__RequestVerificationToken"[^>]*value="([^"]+)"/i];
+      for (const re of csrfPatterns) {
+        const m = loginPage.match(re);
+        if (m) { csrfToken = m[1]; break; }
+      }
+
+      // Build form POST data
+      const params = new URLSearchParams();
+      params.append('username', cred.username);
+      params.append('password', cred.password);
+      if (csrfToken) params.append('csrf_token', csrfToken);
+
+      // Try common field name variations
+      const altFields = [
+        ['user', 'pass'], ['email', 'password'], ['login', 'pwd'],
+        ['user_login', 'user_pass'], ['log', 'pwd'], ['Username', 'Password']
+      ];
+      let postData = params.toString();
+      // Also build alternative post bodies
+      const altBodies = altFields.map(([u, p]) => {
+        const p2 = new URLSearchParams();
+        p2.append(u, cred.username);
+        p2.append(p, cred.password);
+        if (csrfToken) {
+          const csrfNames = ['csrf_token', '_csrf', 'authenticity_token', 'csrfmiddlewaretoken', '__RequestVerificationToken'];
+          for (const cn of csrfNames) { p2.append(cn, csrfToken); }
+        }
+        return p2.toString();
+      });
+
+      // Try login with the default params
+      const bodies = [postData, ...altBodies];
+      for (const body of bodies) {
+        const { stdout: loginResp, stderr } = await runCommand('curl', [
+          '-sk', '-L', '-c', cookieJar, '-b', cookieJar,
+          '--connect-timeout', '10', '--max-time', '15',
+          '-d', body,
+          '-H', 'Content-Type: application/x-www-form-urlencoded',
+          '-w', '%{http_code}',
+          '-o', '/dev/null',
+          loginUrl
+        ], { timeout: 20000 });
+
+        const code = loginResp.trim();
+        if (code === '302' || code === '301' || code === '303' || code === '200' || code === '307') {
+          // Check if we got a session cookie
+          try {
+            const fs = require('fs');
+            const cookies = fs.readFileSync(cookieJar, 'utf8');
+            // Look for session-like cookies
+            const sessionCookies = cookies.split('\n').filter(l =>
+              l.includes('session') || l.includes('auth') || l.includes('token') || l.includes('jwt') || l.includes('PHPSESSID') || l.includes('JSESSIONID')
+            ).map(l => l.split('\t').slice(-1)[0].trim()).join('; ');
+            if (sessionCookies) {
+              return sessionCookies;
+            }
+            // If no session cookie found, return all cookies
+            const allCookies = cookies.split('\n').filter(l => l && !l.startsWith('#')).map(l => l.split('\t').slice(-1)[0].trim()).join('; ');
+            if (allCookies) return allCookies;
+          } catch(e) {}
+        }
+      }
+    } catch(e) {}
+  }
+  return null;
 }
 
 // Check if a host is in scope for testing
@@ -707,10 +792,21 @@ async function runHunt(session, target, resumeFrom = null) {
 
   // Load credentials from vault
   runner.cred = loadCredentials(target);
-  runner.authArgs = buildAuthArgs(runner.cred);
   if (runner.cred) {
-    notify(session.id, 'phase_detail', 'INIT', `Authenticated session: ${runner.cred.username ? 'user: ' + runner.cred.username : 'cookie/token-based'}`);
+    notify(session.id, 'phase_detail', 'INIT', `Credentials loaded: ${runner.cred.username ? 'user: ' + runner.cred.username : 'cookie/token-based'}`);
+    // Try form-based login if username+password provided (no pre-existing cookie)
+    if (runner.cred.username && runner.cred.password && !runner.cred.cookie) {
+      notify(session.id, 'phase_detail', 'INIT', 'Attempting form-based login...');
+      const sessionCookie = await tryFormLogin(target, runner.cred, session.id);
+      if (sessionCookie) {
+        runner.cred.cookie = sessionCookie;
+        notify(session.id, 'phase_detail', 'INIT', `Login successful — session cookie captured`);
+      } else {
+        notify(session.id, 'phase_detail', 'INIT', 'Form login failed — falling back to basic auth');
+      }
+    }
   }
+  runner.authArgs = buildAuthArgs(runner.cred);
 
   const startPhase = resumeFrom ? PHASES.indexOf(resumeFrom) : 0;
   const skippedUntil = resumeFrom ? startPhase : -1;
