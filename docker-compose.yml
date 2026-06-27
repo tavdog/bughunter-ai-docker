@@ -16,6 +16,8 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DB_PATH=/data/bughunter.db
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - bughunter_data:/data
       - bughunter_reports:/var/www/bughunter.clodhost.com/public/reports
