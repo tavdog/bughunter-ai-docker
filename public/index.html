@@ -215,6 +215,10 @@
     <a onclick="showPage('logs')" data-page="logs">
       <span class="nav-icon">&#128221;</span> Learning Logs
     </a>
+    <div class="nav-section">System</div>
+    <a onclick="showPage('settings')" data-page="settings">
+      <span class="nav-icon">&#9881;</span> Settings
+    </a>
   </nav>
 
   <main id="main-content"></main>
@@ -254,6 +258,7 @@ function showPage(page, data) {
     case 'vault': renderVault(main); break;
     case 'patterns': renderPatterns(main); break;
     case 'logs': renderLogs(main); break;
+    case 'settings': renderSettings(main); break;
   }
 }
 
@@ -971,6 +976,129 @@ function downloadReport(sessionId, format) {
 function htmlEscape(str) {
   if (!str) return '';
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function renderSettings(main) {
+  let settings = { provider: 'claude', model: 'claude-sonnet-4-6', base_url: '', has_api_key: false };
+  try { settings = await get('/api/settings'); } catch(e) {}
+
+  main.innerHTML = `
+    <h2 style="margin-bottom:20px;">&#9881; Settings</h2>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-header">AI Provider</div>
+        <div class="form-group">
+          <label>Provider</label>
+          <select id="ai-provider" onchange="updateProviderFields()">
+            <option value="claude" ${settings.provider === 'claude' ? 'selected' : ''}>Claude (Anthropic)</option>
+            <option value="openai" ${settings.provider === 'openai' ? 'selected' : ''}>OpenAI</option>
+            <option value="ollama" ${settings.provider === 'ollama' ? 'selected' : ''}>Ollama (Local)</option>
+            <option value="custom" ${settings.provider === 'custom' ? 'selected' : ''}>Custom (OpenAI-compatible)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>API Key</label>
+          <input id="ai-apikey" type="password" placeholder="${settings.has_api_key ? '(key saved — enter new to change)' : 'sk-...'}">
+        </div>
+        <div class="form-group">
+          <label>Model</label>
+          <input id="ai-model" value="${htmlEscape(settings.model)}" placeholder="claude-sonnet-4-6">
+        </div>
+        <div class="form-group" id="baseurl-group" style="display:${settings.provider === 'ollama' || settings.provider === 'custom' ? '' : 'none'}">
+          <label>Base URL</label>
+          <input id="ai-baseurl" value="${htmlEscape(settings.base_url)}" placeholder="${settings.provider === 'ollama' ? 'http://localhost:11434' : 'https://your-api.com'}">
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="saveSettings()">Save Settings</button>
+          <button class="btn-outline" onclick="testConnection()">Test Connection</button>
+        </div>
+        <div id="settings-result" class="mt"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Provider Info</div>
+        <div id="provider-info">
+          <p class="text-muted text-sm">Select a provider to see setup instructions.</p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  updateProviderInfo();
+}
+
+function updateProviderFields() {
+  const provider = document.getElementById('ai-provider')?.value;
+  const urlGroup = document.getElementById('baseurl-group');
+  const urlInput = document.getElementById('ai-baseurl');
+  if (urlGroup) urlGroup.style.display = (provider === 'ollama' || provider === 'custom') ? '' : 'none';
+  if (urlInput && provider === 'ollama' && !urlInput.value) urlInput.placeholder = 'http://localhost:11434';
+  if (urlInput && provider === 'custom' && !urlInput.value) urlInput.placeholder = 'https://your-api.com';
+  updateProviderInfo();
+}
+
+function updateProviderInfo() {
+  const provider = document.getElementById('ai-provider')?.value;
+  const info = document.getElementById('provider-info');
+  if (!info) return;
+
+  const guides = {
+    claude: `<p>Uses <strong>Claude Code CLI</strong> if available locally, or the <strong>Anthropic API</strong> directly with your key.</p>
+      <p class="text-muted text-sm">Model: <code>claude-sonnet-4-6</code>, <code>claude-opus-4-6</code>, etc.</p>
+      <p class="text-muted text-sm">Get a key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></p>
+      <p class="text-muted text-sm">Leave API key blank to use local Claude Code binary if installed.</p>`,
+    openai: `<p>Uses the <strong>OpenAI API</strong> with your API key.</p>
+      <p class="text-muted text-sm">Model: <code>gpt-4o</code>, <code>gpt-4-turbo</code>, etc.</p>
+      <p class="text-muted text-sm">Get a key at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a></p>`,
+    ollama: `<p>Uses a <strong>local Ollama</strong> instance. No API key needed.</p>
+      <p class="text-muted text-sm">Install: <code>curl -fsSL https://ollama.com/install.sh | sh</code></p>
+      <p class="text-muted text-sm">Pull a model: <code>ollama pull llama3</code></p>
+      <p class="text-muted text-sm">Default URL: <code>http://localhost:11434</code></p>`,
+    custom: `<p>Uses any <strong>OpenAI-compatible API</strong> (LM Studio, vLLM, Groq, Together, etc.)</p>
+      <p class="text-muted text-sm">Must implement <code>/v1/chat/completions</code> endpoint.</p>
+      <p class="text-muted text-sm">Set the base URL and model name to match your provider.</p>`
+  };
+  info.innerHTML = guides[provider] || guides.claude;
+}
+
+async function saveSettings() {
+  const resultDiv = document.getElementById('settings-result');
+  const provider = document.getElementById('ai-provider').value;
+  const model = document.getElementById('ai-model').value.trim();
+  const base_url = document.getElementById('ai-baseurl').value.trim();
+  const api_key = document.getElementById('ai-apikey').value;
+
+  try {
+    const res = await post('/api/settings', {
+      provider,
+      model: model || undefined,
+      base_url: base_url || '',
+      api_key: api_key || undefined
+    });
+    resultDiv.innerHTML = `<span style="color:var(--success);">Settings saved. Provider: ${res.provider}, Connected: ${res.connected ? 'yes' : 'no'}</span>`;
+    // Clear the key field after saving
+    document.getElementById('ai-apikey').value = '';
+    document.getElementById('ai-apikey').placeholder = '(key saved)';
+    updateHeaderStats();
+  } catch(e) {
+    resultDiv.innerHTML = `<span style="color:var(--critical);">Error: ${e.message}</span>`;
+  }
+}
+
+async function testConnection() {
+  const resultDiv = document.getElementById('settings-result');
+  resultDiv.innerHTML = '<span style="color:var(--accent);">Testing connection...</span>';
+  try {
+    const res = await post('/api/settings/test');
+    if (res.success) {
+      resultDiv.innerHTML = `<span style="color:var(--success);">Connection OK — Response: "${res.response}"</span>`;
+    } else {
+      resultDiv.innerHTML = `<span style="color:var(--critical);">Connection failed: ${res.error}</span>`;
+    }
+  } catch(e) {
+    resultDiv.innerHTML = `<span style="color:var(--critical);">Error: ${e.message}</span>`;
+  }
 }
 
 // === INIT ===

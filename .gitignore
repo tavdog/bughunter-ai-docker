@@ -48,4 +48,5 @@ public/reports/
 .env
 docker/.env
 *.zip
+.vault_key
 .DS_Store

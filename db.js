@@ -3,7 +3,22 @@ const path = require('path');
 const crypto = require('crypto');
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'bughunter.db');
-const ENCRYPTION_KEY = process.env.VAULT_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+const KEY_PATH = process.env.VAULT_KEY_PATH || path.join(path.dirname(DB_PATH), '.vault_key');
+
+// Persist encryption key to a file so it survives restarts
+function loadOrCreateKey() {
+  if (process.env.VAULT_ENCRYPTION_KEY) return process.env.VAULT_ENCRYPTION_KEY;
+  try {
+    const fs = require('fs');
+    if (fs.existsSync(KEY_PATH)) return fs.readFileSync(KEY_PATH, 'utf8').trim();
+    const key = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(KEY_PATH, key, { mode: 0o600 });
+    return key;
+  } catch (e) {
+    return crypto.randomBytes(32).toString('hex');
+  }
+}
+const ENCRYPTION_KEY = loadOrCreateKey();
 
 let db;
 
