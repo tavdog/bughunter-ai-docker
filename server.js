@@ -884,10 +884,16 @@ async function phaseAppUnderstanding(session, target, runner) {
   // Fetch page body for analysis (with credentials if available)
   let pageBody = '';
   try {
-    const curlArgs = ['-sk', '--connect-timeout', '10', '--max-time', '15', ...authArgs, target.url];
-    const { stdout } = await runCommand('curl', curlArgs, { timeout: 20000 });
-    pageBody = stdout.substring(0, 8000);
-  } catch (e) {}
+    const curlArgs = ['-sk', '-w', '%{http_code}', '-o', '/tmp/bh-body.txt', '--connect-timeout', '10', '--max-time', '15', ...authArgs, target.url];
+    const { stdout: httpCode } = await runCommand('curl', curlArgs, { timeout: 20000 });
+    notify(session.id, 'phase_detail', 'APP_UNDERSTANDING', `HTTP GET ${target.url} → ${httpCode.trim()}`);
+    try {
+      const fs = require('fs');
+      pageBody = fs.readFileSync('/tmp/bh-body.txt', 'utf8').substring(0, 8000);
+    } catch(e) {}
+  } catch (e) {
+    notify(session.id, 'phase_detail', 'APP_UNDERSTANDING', `HTTP probe failed: ${e.message}`);
+  }
 
   // Claude AI: intelligent application profiling
   if (aiAvailable()) {
@@ -941,15 +947,18 @@ async function phaseRecon(session, target, runner) {
   const authArgs = runner?.authArgs || [];
   notify(session.id, 'phase_detail', 'RECON', 'Starting reconnaissance phase' + (authArgs.length > 0 ? ' (authenticated)' : ''));
 
-  const targetDomain = target.url.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  const targetDomain = target.url.replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
   const results = { subdomains: [], alive: [], urls: [], ports: [] };
 
-  // Subdomain discovery
-  if (toolAvailable('subfinder')) {
+  // Subdomain discovery (skip if target is an IP address)
+  const isIp = /^[\d.]+/.test(targetDomain.replace(/:\d+$/, ''));
+  if (toolAvailable('subfinder') && !isIp) {
     notify(session.id, 'phase_detail', 'RECON', 'Running subfinder for subdomain enumeration');
     const { stdout } = await runCommand(TOOLS.subfinder, ['-d', targetDomain, '-silent'], { timeout: 60000 });
     results.subdomains = stdout.trim().split('\n').filter(Boolean);
     notify(session.id, 'phase_detail', 'RECON', `Subfinder found ${results.subdomains.length} subdomains`);
+  } else if (isIp) {
+    notify(session.id, 'phase_detail', 'RECON', 'Target is an IP — skipping subdomain enumeration');
   }
 
   // Live host probing (limit to reasonable count for performance)
@@ -1089,13 +1098,19 @@ async function gatherAgentProbeData(session, targetUrl, agent, authArgs = []) {
     data.responseHeaders = stdout.substring(0, 3000);
     const codeMatch = stdout.match(/HTTP\/\S+\s+(\d+)/);
     if (codeMatch) data.httpCode = codeMatch[1];
-  } catch (e) {}
+    notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: HEAD ${targetUrl} → HTTP ${data.httpCode || '?'}`);
+  } catch (e) {
+    notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: HEAD ${targetUrl} failed — ${e.message}`);
+  }
 
   // Get response body
   try {
     const { stdout } = await runCommand('curl', ['-sk', '--connect-timeout', '5', '--max-time', '10', ...authArgs, targetUrl], { timeout: 15000 });
     data.responseBody = stdout.substring(0, 6000);
-  } catch (e) {}
+    notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: GET ${targetUrl} → ${stdout.length} bytes`);
+  } catch (e) {
+    notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: GET ${targetUrl} failed — ${e.message}`);
+  }
 
   // Gather type-specific probe data
   const probes = {
@@ -1110,8 +1125,11 @@ async function gatherAgentProbeData(session, targetUrl, agent, authArgs = []) {
   const paths = probes[agent.type] || [];
   for (const p of paths) {
     try {
-      const { stdout } = await runCommand('curl', ['-sk', '--connect-timeout', '5', '-w', '%{http_code}', '-o', '/dev/null', ...authArgs, `${targetUrl}${p}`], { timeout: 10000 });
-      data.endpoints.push({ path: p, http_code: stdout.trim() });
+      const fullUrl = `${targetUrl}${p}`;
+      const { stdout } = await runCommand('curl', ['-sk', '--connect-timeout', '5', '-w', '%{http_code}', '-o', '/dev/null', ...authArgs, fullUrl], { timeout: 10000 });
+      const code = stdout.trim();
+      data.endpoints.push({ path: p, http_code: code });
+      notify(session.id, 'agent_result', 'AGENT_DEPLOY', `${agent.name}: probe ${fullUrl} → HTTP ${code}`);
     } catch (e) {}
   }
 
