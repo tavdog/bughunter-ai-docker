@@ -251,7 +251,7 @@ function showPage(page, data) {
   const main = document.getElementById('main-content');
   switch(page) {
     case 'dashboard': renderDashboard(main, data); break;
-    case 'hunt': renderNewHunt(main); break;
+    case 'hunt': renderNewHunt(main, data); break;
     case 'sessions': renderSessions(main); break;
     case 'targets': renderTargets(main); break;
     case 'findings': renderFindings(main); break;
@@ -404,7 +404,7 @@ function renderDashboard(main) {
   });
 }
 
-function renderNewHunt(main) {
+function renderNewHunt(main, prefill = {}) {
   get('/api/targets').then(targets => {
     get('/api/sessions').then(sessions => {
       main.innerHTML = `
@@ -415,15 +415,15 @@ function renderNewHunt(main) {
               <div class="card-header">Configure Hunt</div>
               <div class="form-group">
                 <label>Target URL *</label>
-                <input id="hunt-url" placeholder="https://app.example.com" value="">
+                <input id="hunt-url" placeholder="https://app.example.com" value="${htmlEscape(prefill.url || '')}">
               </div>
               <div class="form-group">
                 <label>Target Name</label>
-                <input id="hunt-name" placeholder="My Target (auto-filled from URL)">
+                <input id="hunt-name" placeholder="My Target (auto-filled from URL)" value="${htmlEscape(prefill.name || '')}">
               </div>
               <div class="form-group">
                 <label>Program Name (optional)</label>
-                <input id="hunt-program" placeholder="e.g., HackerOne - ExampleCorp">
+                <input id="hunt-program" placeholder="e.g., HackerOne - ExampleCorp" value="${htmlEscape(prefill.program || '')}">
               </div>
               <div class="row">
                 <div class="form-group">
@@ -437,20 +437,20 @@ function renderNewHunt(main) {
                 <div class="form-group">
                   <label>Target Type</label>
                   <select id="hunt-type">
-                    <option value="web">Web Application</option>
-                    <option value="api">API / Web Service</option>
-                    <option value="mobile">Mobile (APK/IPA)</option>
-                    <option value="network">Network / Infrastructure</option>
+                    <option value="web" ${(prefill.type||'web')==='web'?'selected':''}>Web Application</option>
+                    <option value="api" ${prefill.type==='api'?'selected':''}>API / Web Service</option>
+                    <option value="mobile" ${prefill.type==='mobile'?'selected':''}>Mobile (APK/IPA)</option>
+                    <option value="network" ${prefill.type==='network'?'selected':''}>Network / Infrastructure</option>
                   </select>
                 </div>
               </div>
               <div class="form-group">
                 <label>Scope Include (comma-separated, * for wildcard)</label>
-                <input id="hunt-scope-in" placeholder="*.example.com, api.example.com" value="*">
+                <input id="hunt-scope-in" placeholder="*.example.com, api.example.com" value="${htmlEscape(prefill.scopeIn || '*')}">
               </div>
               <div class="form-group">
                 <label>Scope Exclude (comma-separated)</label>
-                <input id="hunt-scope-out" placeholder="blog.example.com, status.example.com">
+                <input id="hunt-scope-out" placeholder="blog.example.com, status.example.com" value="${htmlEscape(prefill.scopeOut || '')}">
               </div>
               <details style="margin-bottom:14px;">
                 <summary style="cursor:pointer;color:var(--text-muted);font-size:13px;padding:4px 0;">
@@ -879,13 +879,7 @@ async function deleteCredential(targetName) {
 }
 
 function useTarget(url, name, program, scopeIn, scopeOut, type) {
-  document.getElementById('hunt-url').value = url;
-  document.getElementById('hunt-name').value = name;
-  document.getElementById('hunt-program').value = program;
-  document.getElementById('hunt-scope-in').value = scopeIn;
-  document.getElementById('hunt-scope-out').value = scopeOut;
-  document.getElementById('hunt-type').value = type;
-  showPage('hunt');
+  showPage('hunt', { url, name, program, scopeIn, scopeOut, type });
 }
 
 // === SESSION VIEW ===
